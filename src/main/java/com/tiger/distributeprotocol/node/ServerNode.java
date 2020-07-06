@@ -1,5 +1,6 @@
 package com.tiger.distributeprotocol.node;
 
+import com.tiger.distributeprotocol.TwoPCServer;
 import com.tiger.distributeprotocol.common.LogUtil;
 import com.tiger.distributeprotocol.handler.MessageHandler;
 import com.tiger.distributeprotocol.message.Message;
@@ -15,6 +16,9 @@ import io.netty.handler.codec.serialization.ObjectDecoder;
 import io.netty.handler.codec.serialization.ObjectEncoder;
 import org.slf4j.Logger;
 
+import java.net.Inet4Address;
+import java.net.UnknownHostException;
+
 /**
  * @Auther: Zeng Hu
  * @Date: 2020/7/5 13:26
@@ -27,10 +31,16 @@ public class ServerNode implements Node {
     private NioEventLoopGroup worker;
     private NioEventLoopGroup boss;
     private int port;
-
+    private String ip;
 
     public ServerNode(int port) {
         this.port = port;
+        try {
+            this.ip = Inet4Address.getLocalHost().getHostAddress();
+        } catch (UnknownHostException e) {
+            LOG.error("fail to get localhost ip", e);
+            ip = "127.0.0.1";
+        }
         this.boss = new NioEventLoopGroup(NUM_PROCESSOR / 2);
         this.worker = new NioEventLoopGroup(NUM_PROCESSOR * 2);
     }
@@ -74,7 +84,19 @@ public class ServerNode implements Node {
 
     @Override
     public void handle(Message message) {
+        LOG.info("{}:{} receive mesage:{}", ip, port, message);
 
+
+    }
+
+    @Override
+    public String getIp() {
+        return ip;
+    }
+
+    @Override
+    public int getPort() {
+        return this.port;
     }
 
     private class ServerChannelInitHandler extends ChannelInitializer<SocketChannel> {
@@ -84,5 +106,9 @@ public class ServerNode implements Node {
             ch.pipeline().addLast(new MessageHandler(ServerNode.this));
             ch.pipeline().addLast(new ObjectEncoder());
         }
+    }
+
+    interface MessageCallback{
+        void callback(Message message);
     }
 }

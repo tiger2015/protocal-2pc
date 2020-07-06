@@ -12,6 +12,7 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.serialization.ClassResolvers;
 import io.netty.handler.codec.serialization.ObjectDecoder;
 import io.netty.handler.codec.serialization.ObjectEncoder;
+import io.netty.util.concurrent.FailedFuture;
 import org.slf4j.Logger;
 
 import java.util.Objects;
@@ -66,12 +67,23 @@ public class ClientNode implements Node, ChannelFutureListener {
             });
         } else {
             LOG.warn("channel is inactive");
+            callback.callback(new FailedFuture(this.channel.eventLoop(), new ChannelException()));
         }
     }
 
     @Override
     public void handle(Message message) {
 
+    }
+
+    @Override
+    public String getIp() {
+        return this.ip;
+    }
+
+    @Override
+    public int getPort() {
+        return this.port;
     }
 
     @Override

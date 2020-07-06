@@ -20,6 +20,10 @@ public interface Node {
 
     void handle(Message message);
 
+    String getIp();
+
+    int getPort();
+
     interface Callback {
         void callback(Future future);
     }
