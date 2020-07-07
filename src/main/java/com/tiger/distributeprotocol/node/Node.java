@@ -11,6 +11,10 @@ import io.netty.util.concurrent.Future;
  **/
 public interface Node {
     int NUM_PROCESSOR = Runtime.getRuntime().availableProcessors();
+    enum State{
+        UP,
+        DOWN;
+    }
 
     void start();
 
@@ -23,6 +27,14 @@ public interface Node {
     String getIp();
 
     int getPort();
+
+    State getState();
+
+    void updateState(State state);
+
+    void addObserver(MessageObserver observer);
+
+    void removeObserver(MessageObserver observer);
 
     interface Callback {
         void callback(Future future);

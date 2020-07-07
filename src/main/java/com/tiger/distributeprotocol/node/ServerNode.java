@@ -2,10 +2,12 @@ package com.tiger.distributeprotocol.node;
 
 import com.tiger.distributeprotocol.TwoPCServer;
 import com.tiger.distributeprotocol.common.LogUtil;
+import com.tiger.distributeprotocol.config.SystemConfig;
 import com.tiger.distributeprotocol.handler.MessageHandler;
 import com.tiger.distributeprotocol.message.Message;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -18,6 +20,8 @@ import org.slf4j.Logger;
 
 import java.net.Inet4Address;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * @Auther: Zeng Hu
@@ -25,13 +29,15 @@ import java.net.UnknownHostException;
  * @Description:
  * @Version: 1.0
  **/
-public class ServerNode implements Node {
+public class ServerNode implements Node, ChannelFutureListener {
     private static final Logger LOG = LogUtil.getLogger(ServerNode.class);
 
     private NioEventLoopGroup worker;
     private NioEventLoopGroup boss;
     private int port;
     private String ip;
+    private State state = State.DOWN;
+    private List<MessageObserver> observers;
 
     public ServerNode(int port) {
         this.port = port;
@@ -43,6 +49,7 @@ public class ServerNode implements Node {
         }
         this.boss = new NioEventLoopGroup(NUM_PROCESSOR / 2);
         this.worker = new NioEventLoopGroup(NUM_PROCESSOR * 2);
+        observers = new ArrayList<>();
     }
 
     /***
@@ -85,8 +92,7 @@ public class ServerNode implements Node {
     @Override
     public void handle(Message message) {
         LOG.info("{}:{} receive mesage:{}", ip, port, message);
-
-
+        observers.forEach(observer -> observer.notify(message));
     }
 
     @Override
@@ -99,6 +105,37 @@ public class ServerNode implements Node {
         return this.port;
     }
 
+    @Override
+    public State getState() {
+        return state;
+    }
+
+    @Override
+    public void updateState(State state) {
+        this.state = state;
+    }
+
+    @Override
+    public void addObserver(MessageObserver observer) {
+        observers.add(observer);
+    }
+
+    @Override
+    public void removeObserver(MessageObserver observer) {
+        observers.remove(observer);
+    }
+
+    @Override
+    public void operationComplete(ChannelFuture future) throws Exception {
+        if (future.isSuccess()) {
+            LOG.info("start server success");
+            state = State.UP;
+        } else {
+            LOG.info("start server fail");
+            System.exit(0);
+        }
+    }
+
     private class ServerChannelInitHandler extends ChannelInitializer<SocketChannel> {
         @Override
         protected void initChannel(SocketChannel ch) throws Exception {
@@ -108,7 +145,4 @@ public class ServerNode implements Node {
         }
     }
 
-    interface MessageCallback{
-        void callback(Message message);
-    }
 }

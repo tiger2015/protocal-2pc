@@ -8,7 +8,7 @@ package com.tiger.distributeprotocol.message;
  **/
 public class VoteMessage implements Message {
     private static final long serialVersionUID = 193914724054660357L;
-    private MessageType type = MessageType.MESSAGE_VOTE;
+    private MessageType messageType = MessageType.MESSAGE_VOTE;
     private long voteEpoch; // 投票周期
     private long serverId; //
     private long transactionId; // 事务ID
@@ -22,10 +22,20 @@ public class VoteMessage implements Message {
     @Override
     public String toString() {
         return "VoteMessage{" +
-                "type=" + type +
+                "type=" + messageType +
                 ", voteEpoch=" + voteEpoch +
                 ", serverId=" + serverId +
                 ", transactionId=" + transactionId +
                 '}';
+    }
+
+    @Override
+    public MessageType getMessageType() {
+        return messageType;
+    }
+
+    @Override
+    public long getServerId() {
+        return serverId;
     }
 }

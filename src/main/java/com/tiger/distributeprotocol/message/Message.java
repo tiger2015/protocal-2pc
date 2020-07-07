@@ -9,4 +9,8 @@ import java.io.Serializable;
  * @Version: 1.0
  **/
 public interface Message extends Serializable {
+
+    MessageType getMessageType();
+
+    long getServerId();
 }

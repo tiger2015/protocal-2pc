@@ -19,12 +19,16 @@ public class Application {
         Map<Long, ClientNode> clientNodes = new HashMap<>();
         SystemConfig.nodes.forEach((key, value) -> {
             if (key != SystemConfig.id) {
-                ClientNode clientNode = new ClientNode(value.ip, value.port);
+                ClientNode clientNode = new ClientNode(key, SystemConfig.id, value.ip, value.port);
                 clientNodes.put(key, clientNode);
             }
         });
         TwoPCServer twoPCServer = new TwoPCServer(SystemConfig.id, serverNode, clientNodes);
         twoPCServer.start();
-        twoPCServer.vote();
+        // 开始询问leader信息
+        // 当等待一段时间后，如果没有收到主的信息，则开启投票
+        if (!twoPCServer.askLeader()) {
+            twoPCServer.vote();
+        }
     }
 }
