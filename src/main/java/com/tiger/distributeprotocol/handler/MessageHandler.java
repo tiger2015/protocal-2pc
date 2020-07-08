@@ -7,6 +7,8 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import org.slf4j.Logger;
 
+import java.util.concurrent.TimeUnit;
+
 /**
  * @Auther: Zeng Hu
  * @Date: 2020/7/5 20:41
@@ -38,5 +40,11 @@ public class MessageHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
 
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        LOG.info("node - {}:{} is inactive", node.getIp(), node.getPort());
+        ctx.channel().eventLoop().schedule(()->node.start(), 3, TimeUnit.SECONDS);
     }
 }

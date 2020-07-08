@@ -1,17 +1,22 @@
 package com.tiger.distributeprotocol;
 
+import com.tiger.distributeprotocol.common.LogUtil;
 import com.tiger.distributeprotocol.config.SystemConfig;
 import com.tiger.distributeprotocol.node.ClientNode;
 import com.tiger.distributeprotocol.node.Node;
 import com.tiger.distributeprotocol.node.ServerNode;
+import org.slf4j.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Hello world!
  */
 public class Application {
+    private static final Logger LOG = LogUtil.getLogger(Application.class);
+
     public static void main(String[] args) {
         SystemConfig.loadConfig();
         SystemConfig.NodeAddress nodeAddress = SystemConfig.nodes.get(SystemConfig.id);
@@ -25,10 +30,20 @@ public class Application {
         });
         TwoPCServer twoPCServer = new TwoPCServer(SystemConfig.id, serverNode, clientNodes);
         twoPCServer.start();
-        // 开始询问leader信息
-        // 当等待一段时间后，如果没有收到主的信息，则开启投票
-        if (!twoPCServer.askLeader()) {
-            twoPCServer.vote();
+        while (true) {
+            if (twoPCServer.getLeaderMessage() == null || !twoPCServer.isLeaderAlive()) { // leader的信息为空或者Leader挂掉
+                LOG.info("leader is down");
+                // 询问leader,如果等待一段时间未收到，则开启投票
+                if (!twoPCServer.askLeader()) {
+                    twoPCServer.vote();
+                    twoPCServer.statisticVote();
+                }
+            }
+            try {
+                TimeUnit.MILLISECONDS.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
         }
     }
 }

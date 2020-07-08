@@ -38,4 +38,12 @@ public class VoteMessage implements Message {
     public long getServerId() {
         return serverId;
     }
+
+    public long getVoteEpoch() {
+        return voteEpoch;
+    }
+
+    public long getTransactionId() {
+        return transactionId;
+    }
 }
