@@ -31,7 +31,7 @@ public class Application {
         TwoPCServer twoPCServer = new TwoPCServer(SystemConfig.id, serverNode, clientNodes);
         twoPCServer.start();
         while (true) {
-            if (twoPCServer.getLeaderMessage() == null || !twoPCServer.isLeaderAlive()) { // leader的信息为空或者Leader挂掉
+            if (!twoPCServer.isLeaderAlive()) { // leader的信息为空或者Leader挂掉
                 LOG.info("leader is down");
                 // 询问leader,如果等待一段时间未收到，则开启投票
                 if (!twoPCServer.askLeader()) {

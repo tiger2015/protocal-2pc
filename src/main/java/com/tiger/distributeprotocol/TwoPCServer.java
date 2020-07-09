@@ -41,9 +41,9 @@ public class TwoPCServer implements MessageObserver {
     private LinkedBlockingQueue<Message> messageQueue;
     private LinkedBlockingQueue<Message> heartbeatMessageQueue;
     private Map<Long, NodeHeartbeat> nodeHeartbeatMap;
-    private volatile LeaderMessage leaderMessage = null;
     private Map<Long, VoteMessage> voteMessageMap;
-    private volatile boolean leaderAlive = false;
+    private LeaderInfo leaderInfo;
+    private volatile  boolean isBegin = false;
 
     public TwoPCServer(long id, ServerNode serverNode, Map<Long, ClientNode> clientNodes) {
         this.id = id;
@@ -59,13 +59,17 @@ public class TwoPCServer implements MessageObserver {
             this.nodeHeartbeatMap.get(key).isAlive(System.currentTimeMillis());
         });
         this.voteMessageMap = new ConcurrentHashMap<>();
+        this.leaderInfo = new LeaderInfo();
     }
 
     public void start() {
         scheduledThreadPool.execute(() -> serverNode.start());
         clientNodes.forEach((key, value) -> value.start());
-        // 启动定时发送心跳数据
-        scheduledThreadPool.scheduleAtFixedRate(new HeartbeatCheckTask(), 3000, 3000, TimeUnit.MILLISECONDS);
+        if(isBegin){
+            // 启动定时发送心跳数据
+            scheduledThreadPool.scheduleAtFixedRate(new HeartbeatCheckTask(), 3000, 3000, TimeUnit.MILLISECONDS);
+            isBegin = false;
+        }
     }
 
     /**
@@ -78,7 +82,7 @@ public class TwoPCServer implements MessageObserver {
      **/
     public void vote() {
         LOG.info("node:{} start vote", this.id);
-        Message message = new VoteMessage(voteEpoch.getAndIncrement(), id, transactionId.getAndIncrement());
+        Message message = new VoteMessage(voteEpoch.getAndIncrement(), id, transactionId.get());
         // 先投自己一票
         this.voteMessageMap.put(this.id, (VoteMessage) message);
         // 然后将自己的投票发送给其他节点，重试15次，每次间隔2000ms
@@ -107,7 +111,6 @@ public class TwoPCServer implements MessageObserver {
         if (voteMessageMap.size() < 3) { // 节点数小于3个，不统计投票
             LOG.info("node:{} receive vote is less than 3", this.id);
             this.voteMessageMap.clear();
-            leaderMessage = null;
             return;
         }
         long leaderId = -1, transactionId = -1;
@@ -127,11 +130,9 @@ public class TwoPCServer implements MessageObserver {
         if (leaderId == this.id) {
             this.role = Role.LEADER;
             LOG.info("node:{} is leader", this.id);
-            leaderAlive = true;
-            leaderMessage = new LeaderMessage(this.id, voteEpoch.get(), transactionId, leaderId);
+            leaderInfo.updateLeaderMessage(new LeaderMessage(this.id, voteEpoch.get(), transactionId, leaderId));
             sendLeader();
         } else {
-            this.leaderMessage = null;
             this.role = Role.FOLLOWER;
             LOG.info("node:{} is follower", this.id);
         }
@@ -147,10 +148,13 @@ public class TwoPCServer implements MessageObserver {
      * @Date: 2020/7/7 22:47
      **/
     public void sendLeader() {
-        Message message = new LeaderMessage(id, voteEpoch.get(), transactionId.get(), id);
-        clientNodes.forEach((key, value) -> value.send(message, new SendMessageRetryCallback(message, value, 15,
-                1000)));
-
+        if (leaderInfo.isAlive()) {
+            LOG.info("node:{} send leader info", id);
+            clientNodes.forEach((key, value) -> value.send(leaderInfo.getMessage(),
+                    new SendMessageRetryCallback(leaderInfo.getMessage(),
+                            value, 15,
+                            1000)));
+        }
     }
 
 
@@ -168,8 +172,8 @@ public class TwoPCServer implements MessageObserver {
                 1000)));
         int times = 0;
         long interval = 200;
-        while (times < 30) {
-            if (leaderMessage == null) {
+        while (times < 300) {
+            if (leaderInfo.getMessage() == null) {
                 try {
                     TimeUnit.MILLISECONDS.sleep(interval);
                     times++;
@@ -191,16 +195,17 @@ public class TwoPCServer implements MessageObserver {
                     heartbeatMessageQueue.put(message);
                     break;
                 case MESSAGE_REQUEST_LEADER: // 请求leader消息
-                    if (role == Role.LEADER) {
-                        sendLeader();
-                    }
+                    sendLeader();
                     break;
                 case MESSAGE_LEAGER:   // leader消息
                     LeaderMessage leaderMessage = (LeaderMessage) message;
                     voteEpoch.set(leaderMessage.getVoteEphoch());
                     transactionId.set(leaderMessage.getTransactionId());
-                    this.leaderMessage = leaderMessage; // 更新主的信息
-                    LOG.info("node:{} update leader info, leader is:{}", id, this.leaderMessage.getLeaderId());
+                    leaderInfo.updateLeaderMessage(leaderMessage);
+                    if (leaderMessage.getLeaderId() == this.id) {
+                        this.role = Role.LEADER;
+                    }
+                    LOG.info("node:{} update leader info, leader is:{}", id, leaderMessage.getLeaderId());
                     break;
                 case MESSAGE_VOTE:  // 投票信息
                     VoteMessage voteMessage = (VoteMessage) message;
@@ -221,14 +226,8 @@ public class TwoPCServer implements MessageObserver {
         }
     }
 
-
-    public LeaderMessage getLeaderMessage() {
-        return leaderMessage;
-    }
-
-
     public boolean isLeaderAlive() {
-        return leaderAlive;
+        return leaderInfo.isAlive();
     }
 
     class SendMessageRetryCallback implements Node.Callback {
@@ -280,8 +279,7 @@ public class TwoPCServer implements MessageObserver {
                 long current = System.currentTimeMillis();
                 if (message == null) {
                     clientNodes.forEach((key, value) -> value.updateState(Node.State.DOWN));
-                    leaderAlive = false;
-                    leaderMessage = null;
+                    leaderInfo.setAlive(false);
                     LOG.warn("all nodes down");
                 } else {
                     nodeHeartbeatMap.get(message.getServerId()).updateTime(current);
@@ -289,15 +287,15 @@ public class TwoPCServer implements MessageObserver {
                 clientNodes.forEach((key, value) -> {
                     if (nodeHeartbeatMap.get(key).isAlive(current)) {
                         clientNodes.get(key).updateState(Node.State.UP);
-                        if (role != Role.FOLLOWER && leaderMessage != null && leaderMessage.getLeaderId() == key) {
-                            leaderAlive = true;
+                        // 如果是LEADER发送的心跳信息
+                        if (leaderInfo.getMessage() != null && leaderInfo.getMessage().getLeaderId() == key){
+                            leaderInfo.setAlive(true);
                         }
                     } else {
                         clientNodes.get(key).updateState(Node.State.DOWN);
                         LOG.warn("node:{} is down", key);
-                        if (role != Role.FOLLOWER && leaderMessage != null && leaderMessage.getLeaderId() == key) {
-                            leaderAlive = false;
-                            leaderMessage = null;
+                        if (leaderInfo.getMessage() != null && leaderInfo.getMessage().getLeaderId() == key){
+                            leaderInfo.setAlive(false);
                             LOG.info("leader:{} is down", key);
                         }
                     }
@@ -307,6 +305,4 @@ public class TwoPCServer implements MessageObserver {
             }
         }
     }
-
-
 }
