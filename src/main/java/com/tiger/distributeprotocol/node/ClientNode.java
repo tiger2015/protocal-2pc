@@ -2,6 +2,7 @@ package com.tiger.distributeprotocol.node;
 
 
 import com.tiger.distributeprotocol.common.LogUtil;
+import com.tiger.distributeprotocol.config.SystemConfig;
 import com.tiger.distributeprotocol.handler.MessageHandler;
 import com.tiger.distributeprotocol.message.HeartBeatMessage;
 import com.tiger.distributeprotocol.message.Message;
@@ -38,15 +39,21 @@ public class ClientNode implements Node, ChannelFutureListener {
     private volatile Channel channel;
     private volatile State state = State.DOWN;
     private Long id;
-    private Long serverId;
+    private Long ownerId;
     private List<MessageObserver> observers;
-    public ClientNode(Long id, Long serverId, String ip, int port) {
+
+    public ClientNode(Long id, Long ownerId, String ip, int port) {
         this.id = id;
-        this.serverId = serverId;
+        this.ownerId = ownerId;
         this.ip = ip;
         this.port = port;
         this.worker = new NioEventLoopGroup(NUM_PROCESSOR * 2);
         this.observers = new ArrayList<>();
+        // 开启定时发送心跳任务
+        scheduledThreadPool.scheduleAtFixedRate(() -> {
+            Message message = new HeartBeatMessage(ownerId);
+            send(message, null);
+        }, SystemConfig.tickTime, SystemConfig.tickTime, TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -79,7 +86,7 @@ public class ClientNode implements Node, ChannelFutureListener {
                     callback.callback(future);
             });
         } else {
-            LOG.warn("channel is inactive");
+            LOG.warn("server:{}:{} channel is inactive", ip, port);
             if (Objects.nonNull(callback))
                 callback.callback(new FailedFuture(this.channel.eventLoop(), new ChannelException()));
         }
@@ -105,6 +112,11 @@ public class ClientNode implements Node, ChannelFutureListener {
     }
 
     @Override
+    public long getId() {
+        return this.id;
+    }
+
+    @Override
     public void updateState(State state) {
         this.state = state;
     }
@@ -122,23 +134,20 @@ public class ClientNode implements Node, ChannelFutureListener {
     @Override
     public void operationComplete(ChannelFuture future) throws Exception {
         if (!future.isSuccess()) { // 如果连接不成功则重连
-            LOG.warn("connect fail, start reconnect after 1s");
-            future.channel().eventLoop().schedule(() -> start(), 3, TimeUnit.SECONDS);
+            LOG.warn("connect fail, start reconnect after {}ms", SystemConfig.tickTime);
+            future.channel().eventLoop().schedule(() -> start(), SystemConfig.tickTime, TimeUnit.MILLISECONDS);
             state = State.DOWN;
-        } else {
-            LOG.info("connect to:{} success", future.channel().remoteAddress());
+        } else {  // 连接成功
+            LOG.info("connect to server:{}:{} success", ip, port);
             state = State.UP;
-            scheduledThreadPool.scheduleAtFixedRate(() -> {
-                Message message = new HeartBeatMessage(serverId);
-                send(message, null);
-            }, 3000, 3000, TimeUnit.MILLISECONDS);
         }
     }
 
     private class ClientChannelInitHandler extends ChannelInitializer<SocketChannel> {
         @Override
         protected void initChannel(SocketChannel ch) throws Exception {
-            ch.pipeline().addLast(new ObjectDecoder(1024 * 1024, ClassResolvers.weakCachingConcurrentResolver(ClientNode.this.getClass().getClassLoader())));
+            ch.pipeline().addLast(new ObjectDecoder(1024 * 1024,
+                    ClassResolvers.weakCachingConcurrentResolver(ClientNode.this.getClass().getClassLoader())));
             ch.pipeline().addLast(new MessageHandler(ClientNode.this));
             ch.pipeline().addLast(new ObjectEncoder());
         }

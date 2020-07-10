@@ -38,8 +38,9 @@ public class ServerNode implements Node, ChannelFutureListener {
     private String ip;
     private State state = State.DOWN;
     private List<MessageObserver> observers;
-
-    public ServerNode(int port) {
+   private long id;
+    public ServerNode(long id, int port) {
+        this.id = id;
         this.port = port;
         try {
             this.ip = Inet4Address.getLocalHost().getHostAddress();
@@ -91,7 +92,7 @@ public class ServerNode implements Node, ChannelFutureListener {
 
     @Override
     public void handle(Message message) {
-        LOG.info("{}:{} receive mesage:{}", ip, port, message);
+        LOG.info("node:{} receive message:{}", id, message);
         observers.forEach(observer -> observer.notify(message));
     }
 
@@ -108,6 +109,11 @@ public class ServerNode implements Node, ChannelFutureListener {
     @Override
     public State getState() {
         return state;
+    }
+
+    @Override
+    public long getId() {
+        return this.id;
     }
 
     @Override

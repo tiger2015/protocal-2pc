@@ -20,7 +20,7 @@ public class Application {
     public static void main(String[] args) {
         SystemConfig.loadConfig();
         SystemConfig.NodeAddress nodeAddress = SystemConfig.nodes.get(SystemConfig.id);
-        ServerNode serverNode = new ServerNode(nodeAddress.port);
+        ServerNode serverNode = new ServerNode(SystemConfig.id, nodeAddress.port);
         Map<Long, ClientNode> clientNodes = new HashMap<>();
         SystemConfig.nodes.forEach((key, value) -> {
             if (key != SystemConfig.id) {
@@ -40,10 +40,11 @@ public class Application {
                 }
             }
             try {
-                TimeUnit.MILLISECONDS.sleep(1000);
+                TimeUnit.MILLISECONDS.sleep(3000);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
+            LOG.info("handle transaction");
         }
     }
 }

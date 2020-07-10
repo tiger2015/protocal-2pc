@@ -1,6 +1,7 @@
 package com.tiger.distributeprotocol;
 
 import com.tiger.distributeprotocol.common.LogUtil;
+import com.tiger.distributeprotocol.config.SystemConfig;
 import com.tiger.distributeprotocol.message.LeaderMessage;
 import com.tiger.distributeprotocol.message.Message;
 import com.tiger.distributeprotocol.message.RequestLeaderMessage;
@@ -30,8 +31,11 @@ public class TwoPCServer implements MessageObserver {
 
     private static final Logger LOG = LogUtil.getLogger(TwoPCServer.class);
     private static ScheduledExecutorService scheduledThreadPool = Executors.newScheduledThreadPool(8);
+    public static final long heartbeatMessageTimeout = SystemConfig.tickTime * 3;
+    public static final int maxRetryTimes = 10; // 传递消息时，尝试的最大次数
+    public static final long timeout = SystemConfig.tickTime * 10; // 消息的最大等待时间
+    public static final long interval = 100; //轮询的时间间隔
 
-    private Object lock = new Object();
     private final long id;
     private final ServerNode serverNode; // 服务器节点
     private final Map<Long, ClientNode> clientNodes; // 客户端节点
@@ -43,7 +47,6 @@ public class TwoPCServer implements MessageObserver {
     private Map<Long, NodeHeartbeat> nodeHeartbeatMap;
     private Map<Long, VoteMessage> voteMessageMap;
     private LeaderInfo leaderInfo;
-    private volatile  boolean isBegin = false;
 
     public TwoPCServer(long id, ServerNode serverNode, Map<Long, ClientNode> clientNodes) {
         this.id = id;
@@ -65,11 +68,8 @@ public class TwoPCServer implements MessageObserver {
     public void start() {
         scheduledThreadPool.execute(() -> serverNode.start());
         clientNodes.forEach((key, value) -> value.start());
-        if(isBegin){
-            // 启动定时发送心跳数据
-            scheduledThreadPool.scheduleAtFixedRate(new HeartbeatCheckTask(), 3000, 3000, TimeUnit.MILLISECONDS);
-            isBegin = false;
-        }
+        // 启动检测心跳任务
+        scheduledThreadPool.execute(new HeartbeatCheckTask());
     }
 
     /**
@@ -85,9 +85,10 @@ public class TwoPCServer implements MessageObserver {
         Message message = new VoteMessage(voteEpoch.getAndIncrement(), id, transactionId.get());
         // 先投自己一票
         this.voteMessageMap.put(this.id, (VoteMessage) message);
-        // 然后将自己的投票发送给其他节点，重试15次，每次间隔2000ms
-        clientNodes.forEach((key, value) -> value.send(message, new SendMessageRetryCallback(message, value, 15,
-                2000)));
+        // 然后将自己的投票发送给其他节点
+        clientNodes.forEach((key, value) -> value.send(message, new SendMessageRetryCallback(message, value,
+                maxRetryTimes,
+                SystemConfig.tickTime)));
     }
 
     /**
@@ -95,8 +96,7 @@ public class TwoPCServer implements MessageObserver {
      */
     public void statisticVote() {
         int times = 0;
-        long interval = 200;
-        while (times < 50) {
+        while (times < timeout / interval) {
             if (this.voteMessageMap.size() == clientNodes.size() + 1) { //所有投票都收到
                 break;
             }
@@ -152,8 +152,8 @@ public class TwoPCServer implements MessageObserver {
             LOG.info("node:{} send leader info", id);
             clientNodes.forEach((key, value) -> value.send(leaderInfo.getMessage(),
                     new SendMessageRetryCallback(leaderInfo.getMessage(),
-                            value, 15,
-                            1000)));
+                            value, maxRetryTimes,
+                            SystemConfig.tickTime)));
         }
     }
 
@@ -167,12 +167,13 @@ public class TwoPCServer implements MessageObserver {
      * @Date: 2020/7/7 22:48
      **/
     public boolean askLeader() {
+        LOG.info("node:{} start ask leader", this.id);
         Message message = new RequestLeaderMessage(id);
-        clientNodes.forEach((key, value) -> value.send(message, new SendMessageRetryCallback(message, value, 10,
-                1000)));
+        clientNodes.forEach((key, value) -> value.send(message, new SendMessageRetryCallback(message, value,
+                maxRetryTimes,
+                SystemConfig.tickTime)));
         int times = 0;
-        long interval = 200;
-        while (times < 300) {
+        while (times < timeout / interval) {
             if (leaderInfo.getMessage() == null) {
                 try {
                     TimeUnit.MILLISECONDS.sleep(interval);
@@ -235,7 +236,7 @@ public class TwoPCServer implements MessageObserver {
         private ClientNode clientNode;
         private int maxTimes = 10;
         private long interval = 3000;
-        private int retryTimes = 0;
+        private int retryTimes = 10;
 
         public SendMessageRetryCallback(Message message, ClientNode clientNode, int maxTimes, long interval) {
             this.message = message;
@@ -253,18 +254,20 @@ public class TwoPCServer implements MessageObserver {
         public void callback(Future future) {
             if (!future.isSuccess()) {
                 try {
-                    LOG.info("send vote fail, retry....");
+                    LOG.info("send message fail, retry....");
                     TimeUnit.MILLISECONDS.sleep(interval);
                     retryTimes = retryTimes + 1;
                     if (retryTimes < maxTimes) {
                         clientNode.send(message, this);
                     } else {
-                        LOG.warn("after try {} times, can't send vote to {}:{}", maxTimes, clientNode.getIp(),
-                                clientNode.getPort());
+                        LOG.warn("after try {} times, can't send message to node:{}", maxTimes,
+                                this.clientNode.getId());
                     }
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
+            } else {
+                LOG.info("send message:{} success to node:{}", message.getMessageType(), this.clientNode.getId());
             }
         }
     }
@@ -274,34 +277,37 @@ public class TwoPCServer implements MessageObserver {
 
         @Override
         public void run() {
-            try {
-                Message message = heartbeatMessageQueue.poll(15000, TimeUnit.MILLISECONDS);
-                long current = System.currentTimeMillis();
-                if (message == null) {
-                    clientNodes.forEach((key, value) -> value.updateState(Node.State.DOWN));
-                    leaderInfo.setAlive(false);
-                    LOG.warn("all nodes down");
-                } else {
-                    nodeHeartbeatMap.get(message.getServerId()).updateTime(current);
-                }
-                clientNodes.forEach((key, value) -> {
-                    if (nodeHeartbeatMap.get(key).isAlive(current)) {
-                        clientNodes.get(key).updateState(Node.State.UP);
-                        // 如果是LEADER发送的心跳信息
-                        if (leaderInfo.getMessage() != null && leaderInfo.getMessage().getLeaderId() == key){
-                            leaderInfo.setAlive(true);
-                        }
+
+            while (true) {
+                try {
+                    Message message = heartbeatMessageQueue.poll(heartbeatMessageTimeout, TimeUnit.MILLISECONDS);
+                    long current = System.currentTimeMillis();
+                    if (message == null) {
+                        clientNodes.forEach((key, value) -> value.updateState(Node.State.DOWN));
+                        leaderInfo.setAlive(false);
+                        LOG.warn("all nodes down");
                     } else {
-                        clientNodes.get(key).updateState(Node.State.DOWN);
-                        LOG.warn("node:{} is down", key);
-                        if (leaderInfo.getMessage() != null && leaderInfo.getMessage().getLeaderId() == key){
-                            leaderInfo.setAlive(false);
-                            LOG.info("leader:{} is down", key);
-                        }
+                        nodeHeartbeatMap.get(message.getServerId()).updateTime(current);
                     }
-                });
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+                    clientNodes.forEach((key, value) -> {
+                        if (nodeHeartbeatMap.get(key).isAlive(current)) {
+                            clientNodes.get(key).updateState(Node.State.UP);
+                            // 如果是LEADER发送的心跳信息
+                            if (leaderInfo.getMessage() != null && leaderInfo.getMessage().getLeaderId() == key) {
+                                leaderInfo.setAlive(true);
+                            }
+                        } else {
+                            clientNodes.get(key).updateState(Node.State.DOWN);
+                            LOG.warn("node:{} is down", key);
+                            if (leaderInfo.getMessage() != null && leaderInfo.getMessage().getLeaderId() == key) {
+                                leaderInfo.setAlive(false);
+                                LOG.info("leader:{} is down", key);
+                            }
+                        }
+                    });
+                } catch (InterruptedException e) {
+                    LOG.error("node:"+id+" handle heartbeat error", e);
+                }
             }
         }
     }

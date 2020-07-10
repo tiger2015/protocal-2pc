@@ -30,6 +30,8 @@ public interface Node {
 
     State getState();
 
+    long getId();
+
     void updateState(State state);
 
     void addObserver(MessageObserver observer);

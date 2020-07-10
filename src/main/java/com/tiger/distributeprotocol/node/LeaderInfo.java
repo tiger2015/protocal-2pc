@@ -33,6 +33,7 @@ public class LeaderInfo {
 
     public synchronized void setAlive(boolean alive) {
         this.alive = alive;
+        if(!this.alive) message = null;
     }
 
     public synchronized boolean isAlive() {

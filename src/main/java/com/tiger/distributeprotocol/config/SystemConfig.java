@@ -18,7 +18,7 @@ public class SystemConfig {
     private static final String CONFIG_FILE = "server.properties";
     private static final String FILE_PATH = "./config/" + CONFIG_FILE;
     public static final Map<Long, NodeAddress> nodes = new HashMap<>();
-    public static long sesstionTimeout = 3000;
+    public static long tickTime = 2000;
     public static long id = 1;
 
     public static void loadConfig() {
@@ -51,8 +51,8 @@ public class SystemConfig {
                 if(element.equals("server.id")){
                     id = Long.parseLong(properties.getProperty(element));
                 }
-                if (element.equals("session.timeout")) {
-                    sesstionTimeout = Long.parseLong(properties.getProperty(element));
+                if (element.equals("tickTime")) {
+                    tickTime = Long.parseLong(properties.getProperty(element));
                 }
                 if (compile.matcher(element).find()){
                    // LOG.info("{}", properties.getProperty(element));
